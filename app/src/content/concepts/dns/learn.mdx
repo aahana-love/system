@@ -1,0 +1,40 @@
+<Callout kind="analogy" title="Your phone's contact list">
+You don't remember your friends' phone numbers. You tap a name, and the phone looks up the number. DNS does the same job for the internet: you type a name, and DNS finds the number, the IP address, that computers actually use to deliver data.
+</Callout>
+
+## Why names need translating
+
+Every server on the internet is reached by its IP address, something like `203.0.113.10`. Routers only understand these numbers. People are bad at remembering numbers, and the numbers change: when a company moves a service to new servers, the address changes but the name `amazon.in` stays the same.
+
+So before your browser can open `www.amazon.in`, it has to ask one question: **what is the IP address for this name?** The system that answers is the Domain Name System.
+
+## No single phone book
+
+There are hundreds of millions of domain names, and they change every minute. One server holding all of them would be a single point of failure and would collapse under the whole world's lookups. DNS splits the work into a tree, and each level only knows who to ask next:
+
+- **Root servers** know where the servers for each top-level domain (`.com`, `.in`, `.org`) are.
+- **TLD servers** for `.in` know which nameservers are responsible for `amazon.in`.
+- **Authoritative nameservers** for `amazon.in` hold the actual records, such as the address of `www.amazon.in`.
+
+You never talk to these servers yourself. A **recursive resolver** does the running around for you. It's usually run by your ISP, or it's a public one like Google's `8.8.8.8` or Cloudflare's `1.1.1.1`.
+
+## Watch a lookup
+
+Press **Look up** and follow the request hop by hop. Then press it again right away and see what changes. After that, move the clock forward to watch cached answers expire, and try **Clear my device's cache** to see the resolver's cache take over.
+
+<DnsJourney />
+
+## What you just saw
+
+1. Your browser checks its own cache, then asks the operating system, which has a cache too.
+2. On a miss, the OS sends one question to the recursive resolver: "give me the final answer for `www.amazon.in`."
+3. The resolver asks a root server, which replies with a **referral**: "I don't know, but here are the `.in` servers."
+4. The `.in` servers refer it to `amazon.in`'s own nameservers.
+5. The authoritative nameserver answers with the address and a TTL (time to live).
+6. Each layer on the way back keeps a copy until that TTL runs out.
+
+The first lookup took four network round trips. The repeat cost nothing, because the answer was already sitting in your browser. Most real lookups are answered from a cache somewhere along the way. That's how DNS handles the whole world's traffic without the root servers melting.
+
+<Callout kind="interview" title="DNS in one sentence">
+DNS is a distributed, cached, hierarchical lookup: root → TLD → authoritative nameserver, with a recursive resolver doing the walking and TTLs deciding how long each answer is reused.
+</Callout>

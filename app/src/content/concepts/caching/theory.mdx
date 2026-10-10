@@ -1,0 +1,141 @@
+## Where caches live
+
+A single request can pass through several caches. Each one that hits saves every layer behind it.
+
+| Layer | Example | Typical cost of a hit | Shared by |
+| --- | --- | --- | --- |
+| Browser or app | HTTP cache, in-app memory | no network at all | one user |
+| CDN | an edge server near the user | 5–30 ms from the user | everyone in that area |
+| In-process | a hash map inside each app server | well under a microsecond | one server |
+| Distributed cache | Redis or Memcached cluster | about 0.5–1 ms (one network hop) | all app servers |
+| Database | its buffer pool | skips the disk, still pays query cost | one database |
+
+An in-process cache is the fastest, but every server holds its own copy, and those copies can disagree. A distributed cache is one shared copy, at the cost of a network hop. Many systems use both: a tiny local cache for the very hottest keys, and Redis for everything else.
+
+## Reading: cache-aside and read-through
+
+**Cache-aside** (also called lazy loading) is the most common pattern. The application owns the logic:
+
+```ts
+async function getUser(id: string) {
+  const cached = await redis.get(`user:${id}`)
+  if (cached) return JSON.parse(cached)                            // hit
+
+  const user = await db.query('SELECT * FROM users WHERE id = $1', [id])  // miss
+  await redis.set(`user:${id}`, JSON.stringify(user), 'EX', 300)   // keep 5 minutes
+  return user
+}
+```
+
+Only data someone actually asked for gets cached. If the cache goes down, reads still work, just slower.
+
+With **read-through**, the cache itself loads missing data from the database, so the application only ever talks to the cache. Amazon's DynamoDB Accelerator (DAX) works this way in front of DynamoDB.
+
+## Writing: three strategies
+
+Reads are the easy half. When data changes, the cache and the database have to stay in step. Scroll through the three write strategies; the diagram follows along.
+
+<Scrolly diagram="cacheWrites">
+<Step id="through">
+
+### Write-through
+
+Every write goes to the cache **and** the database before the app tells the user "saved". Reads right after a write always find fresh data in the cache.
+
+The cost: every write pays for two writes, and the cache fills with data that may never be read again. Use it when reads right after writes must be fast and correct, like a user's settings page.
+
+</Step>
+<Step id="back">
+
+### Write-back (write-behind)
+
+The write goes to the cache only, and the app answers immediately. The cache flushes changes to the database later, often in batches. Writes become extremely fast, and bursts are absorbed: a like counter can take 50,000 increments a second and write one total per second to the database.
+
+The danger is real: if the cache node dies before it flushes, those writes are gone. Use it only for data you can afford to lose a little of, or with a cache that replicates and persists its data.
+
+</Step>
+<Step id="around">
+
+### Write-around
+
+The write goes straight to the database, and the cached copy is deleted (or never created). The cache only holds data that someone has read, so data that is written once and rarely read, like logs and uploads, never pushes hot items out.
+
+The cost: the first read after a write is a miss. This is the natural write side of cache-aside, and the most common setup: **update the database, then delete the cache key.**
+
+</Step>
+</Scrolly>
+
+## Choosing what to evict
+
+- **LRU** keeps whatever was used recently. It's the default because recent use predicts near-future use for most workloads.
+- **LFU** keeps the long-term favorites. It resists one-off scans but is slow to forget items that used to be popular.
+- **FIFO** ignores usage entirely and is rarely the best choice.
+- **TTL** isn't an eviction policy for a full cache, but it removes entries by age, which limits how stale they can get.
+
+Redis lets you choose with the `maxmemory-policy` setting (for example `allkeys-lru` or `allkeys-lfu`). To save memory, Redis approximates LRU by sampling a few keys and evicting the oldest of the sample, rather than tracking a perfect order.
+
+A classic interview coding question is building an LRU cache with O(1) `get` and `put`: a hash map from key to node, plus a doubly linked list ordered by recency. On every access, move the node to the front; when full, evict from the back. You'll build one in the low-level design track.
+
+## Invalidation: keeping copies honest
+
+Phil Karlton's well-known line puts it best: "There are only two hard things in Computer Science: cache invalidation and naming things."
+
+You have three main tools:
+
+1. **TTL.** The simplest. Data can be stale for at most the TTL, so choose it by asking how stale is acceptable: a product description can be minutes old; seat availability at checkout can't be stale at all.
+2. **Delete on write.** After updating the database, delete the cache key so the next read reloads it. Prefer deleting over updating the cached value: if two writers update the cache at nearly the same time, the older value can land last and stick.
+3. **Versioned keys.** Put a version in the key (`product:42:v7`) and bump it on every change. Old entries are never read again and simply age out.
+
+Even delete-on-write leaves a small race. A reader misses and reads the old value from the database. A writer updates the database and deletes the key. Then the slow reader writes its old value into the cache. That value now stays stale until its TTL expires. This is why you keep a TTL as a safety net even when you invalidate on writes.
+
+## When caches hurt: four failure patterns
+
+| Problem | What happens | Fix |
+| --- | --- | --- |
+| Cache stampede (thundering herd) | A hot key expires and thousands of requests miss at once, all hitting the database | Request coalescing, stale-while-revalidate, refreshing hot keys early |
+| Cache penetration | Requests for keys that don't exist always miss and always reach the database | Cache "not found" briefly (negative caching), or check a Bloom filter of valid keys |
+| Cache avalanche | Many keys expire together, or the cache restarts empty, and the database is flooded | Random jitter on TTLs (300 s ± 10%), warming the cache before sending traffic |
+| Hot key | One key gets so much traffic that the single cache node holding it overloads | Copy the key to several nodes, add a small local cache in each app server |
+
+See the stampede for yourself. A key that 400 requests a second depend on expires, and rebuilding it takes 200 ms:
+
+<StampedeSim />
+
+## Consistency: a cache is a copy
+
+Every cache answer might be stale, so for each kind of data ask how stale is acceptable. Feeds, product pages and profile pictures can be seconds to minutes old. Account balances at payment time, seat inventory at checkout and permission changes should come from the source of truth, or be invalidated before the write is confirmed.
+
+The cache is never the source of truth. If it's wiped, the system should get slower, not wrong. And plan for that slower: a database sized only for the 1% of reads that miss will collapse when a restart sends it 100% of reads.
+
+## Redis vs Memcached
+
+| | Redis | Memcached |
+| --- | --- | --- |
+| Data types | strings, hashes, lists, sets, sorted sets, streams and more | strings (bytes) only |
+| Persistence | optional snapshots and append-only log | none |
+| Replication and failover | built in (replicas, Sentinel, Cluster) | none built in; clients spread keys |
+| Threading | commands run on one main thread (with I/O threads since 6.0) | multi-threaded |
+| Pick it when | you need data structures (sorted-set leaderboards, rate-limit counters) or persistence | you need a plain, very large, simple cache |
+
+## Numbers to remember
+
+- A Redis GET in the same data center: about 0.5–1 ms, mostly network time.
+- One Redis instance handles on the order of 100,000 simple operations per second. Real numbers depend on hardware, value size and pipelining.
+- Sizing: number of hot items × size per item. 10 million product records at 2 KB each is about 20 GB, which fits a small Redis cluster.
+
+## At Amazon and Uber scale
+
+- **Amazon.** DynamoDB Accelerator (DAX) is a managed read-through and write-through cache in front of DynamoDB. The AWS Builders' Library article on caching stresses that a service must survive its cache going cold, because a cache outage suddenly sends the full load to the systems behind it.
+- **Uber.** Uber's engineering blog describes CacheFront, a Redis-based caching layer built into Docstore, its main online database, serving tens of millions of reads per second with invalidation driven by database change events.
+
+## How to say it in an interview
+
+> Reads outnumber writes about 100 to 1, so I'll put a Redis cluster in front of the database using cache-aside. Keys look like `user:{id}` with a 5-minute TTL plus random jitter. On writes, we update the database and delete the key. Hot keys get request coalescing so an expiry can't stampede the database. If Redis goes down, we fall back to the database with load shedding, so we're slower but still correct.
+
+## Sources and further reading
+
+- AWS Builders' Library, [Caching challenges and strategies](https://aws.amazon.com/builders-library/caching-challenges-and-strategies/)
+- Redis documentation, key eviction and `maxmemory-policy`
+- Uber Engineering blog, "How Uber Serves Over 40 Million Reads Per Second from Online Storage Using an Integrated Cache"
+- Martin Kleppmann, *Designing Data-Intensive Applications*
+- Alex Xu, *System Design Interview*, Volume 1

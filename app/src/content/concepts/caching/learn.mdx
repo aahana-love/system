@@ -1,0 +1,53 @@
+<Callout kind="analogy" title="Your desk vs the records room">
+An engineer keeps the drawings for this week's jobs on their desk, not in the records room two floors down. Most of the time, what they need is within reach. When it isn't, they walk down, fetch it, and keep it on the desk for next time. When the desk fills up, something has to go back.
+
+That's caching: a small, fast place for the data you use most, in front of a big, slow one.
+</Callout>
+
+## Why caching works
+
+Two facts make caching worth it.
+
+1. **Memory is much faster than a database.** Reading a value from Redis (in memory, one network hop away) takes well under a millisecond. A database query that touches disk or joins tables often takes 5–50 ms or more.
+2. **Access is uneven.** A small share of items gets most of the traffic: the top products in a sale, a celebrity's profile, today's train timings. Keep those few hot items in memory and most requests never reach the database.
+
+## Hits and misses
+
+- **Cache hit**: the answer is in the cache. Fast.
+- **Cache miss**: go to the database, return the result, and save it in the cache for next time.
+
+The **hit ratio** is hits divided by all requests, and it decides almost everything. Average time per request is:
+
+**hit ratio × cache time + miss ratio × (cache time + database time)**
+
+A miss pays for both trips, because you check the cache first. Try it:
+
+<HitRatioCalc />
+
+Move the slider from 90% to 99%. The average drops a lot, and the database load drops tenfold: from 1 request in 10 to 1 in 100. That's why engineers fight for the last few percent of hit ratio.
+
+## Try it: the Cache Lab
+
+This cache has room for only a few keys. Requests arrive for users `u1` to `u20`. Start the traffic and watch hits and misses. The slot marked **next to go** is the one the eviction policy will drop on the next miss.
+
+<CacheLab />
+
+Things to try:
+
+- **Popular workload, capacity 5.** A few users get most requests, so even a small cache gets a good hit ratio.
+- **Switch to Uniform.** Every user is equally likely, and the same cache barely helps. Caching pays off when access is skewed.
+- **Switch to Scan with LRU, then drag capacity from 7 to 8.** Users 1–8 arrive in a loop. With 7 slots, each key is evicted just before it's needed again, so the hit ratio stays at zero. With 8, every request after the first lap is a hit. Batch jobs that read every row once cause exactly this.
+- **Turn on a 5 s TTL.** Entries now expire even when there's room, trading hit ratio for fresher data.
+- **Pause, then request users yourself.** Watch how LRU, LFU and FIFO pick different victims for the same requests.
+
+## When the cache is full
+
+A full cache must evict something to make room. The rule it follows is the eviction policy:
+
+- **LRU (least recently used)**: drop the item nobody has touched for the longest time. The usual default.
+- **LFU (least frequently used)**: drop the item used the fewest times. Good when popularity is stable.
+- **FIFO**: drop the oldest inserted item, even if it's still hot. Simple, but usually worse.
+
+<Callout kind="interview" title="Caching in four lines">
+A cache trades memory and freshness for speed. It works because access is skewed. The hit ratio drives both latency and database load. When the cache is full, an eviction policy, usually LRU, decides what goes.
+</Callout>

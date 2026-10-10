@@ -1,0 +1,101 @@
+## The tree, read right to left
+
+A full name like `www.amazon.in.` is read from the right. The invisible trailing dot is the root. Then comes `in`, the top-level domain. `amazon` is the domain Amazon registered through a registrar. `www` is a subdomain Amazon chose itself.
+
+Each level hands responsibility to the next with an NS record. The root zone says "for `.in`, ask these servers". The `.in` zone says "for `amazon.in`, ask these servers". This handing-down is called delegation, and it's why no single organization has to know every name.
+
+There are 13 named root server identities, `a.root-servers.net` through `m.root-servers.net`. Each is served by many machines around the world using anycast, so there are well over a thousand root server instances. Your lookup reaches a nearby one.
+
+## Recursive vs iterative queries
+
+| Query | Who asks | Who answers | What it means |
+| --- | --- | --- | --- |
+| Recursive | Your device | Recursive resolver | "Do the whole job and give me the final answer." |
+| Iterative | Resolver | Root, TLD, authoritative | "Give me the answer if you have it, or tell me who to ask next." |
+
+Why split it this way? Root and TLD servers stay simple: they answer one question and forget you. The resolver does the work and caches the results for **all** its users. When your neighbor on the same ISP looks up `amazon.in` a minute after you, the resolver already knows.
+
+## Record types you'll meet
+
+| Type | Maps a name to | Example | Used for |
+| --- | --- | --- | --- |
+| A | an IPv4 address | `www.shop.in → 203.0.113.10` | the usual final answer |
+| AAAA | an IPv6 address | `www.shop.in → 2001:db8::10` | the same, for IPv6 |
+| CNAME | another name | `www.shop.in → shop.cdnprovider.net` | pointing at a CDN or a provider |
+| MX | mail servers, with priorities | `shop.in → mail.shop.in` | delivering email |
+| NS | the zone's nameservers | `shop.in → ns1.dnshost.net` | delegation |
+| TXT | free text | `"v=spf1 …"` | domain verification, email security |
+
+One rule trips people up: a CNAME can't sit at the root of your domain (`shop.in` itself), because that name also needs NS and other records. DNS providers offer "ALIAS" or "CNAME flattening" to work around it.
+
+## TTL: the dial between speed and agility
+
+Every record carries a TTL in seconds. Caches may reuse the answer until it expires.
+
+- **Long TTL** (hours to days): fewer lookups, faster responses, less load on your nameservers. But a change takes that long to reach everyone.
+- **Short TTL** (30–60 seconds): changes and failovers reach users quickly, at the cost of more lookups and slightly more latency.
+
+The standard migration move: a day or more before you change an IP address, lower the TTL to about 60 seconds. Wait for the old, long TTL to run out everywhere, make the switch, then raise the TTL again.
+
+"DNS propagation" is a misleading name. Nothing is pushed anywhere. Old answers simply expire from caches around the world when their TTL runs out. Negative answers are cached too: if you look up a name before its record exists, the NXDOMAIN reply can be cached for a while. Some clients and runtimes also hold answers longer than the TTL says, so plan for stragglers.
+
+## How the question travels
+
+Normal DNS queries use UDP on port 53. A question and its answer each fit in one small packet, so skipping TCP's handshake saves a full round trip. DNS falls back to TCP when an answer is too large for one packet, and for zone transfers between nameservers. DNS over HTTPS and DNS over TLS encrypt queries, so networks along the way can't read or tamper with the names you look up.
+
+## DNS as a system design tool
+
+DNS is the first decision point for every request, so large systems use it to steer traffic:
+
+1. **Round-robin DNS**: publish several A records; clients spread across them. It's cheap but blind: DNS doesn't know if a server is dead or overloaded.
+2. **GeoDNS / latency-based routing**: return a different address depending on where the query comes from, so users reach the nearest region. AWS Route 53 offers latency-based and geolocation routing policies.
+3. **DNS failover**: health checks pull a failed region's record out of the answers. Users move as their cached answers expire.
+
+<ArchDiagram
+  label="DNS picks a region, a load balancer picks a server"
+  diagram={{
+    width: 680,
+    height: 250,
+    nodes: [
+      { id: 'u', label: 'Users', sub: 'Nashik, London', x: 80, y: 125 },
+      { id: 'dns', label: 'GeoDNS', sub: 'picks a region', x: 250, y: 125 },
+      { id: 'lb1', label: 'Load balancer', sub: 'Mumbai', x: 440, y: 60 },
+      { id: 'lb2', label: 'Load balancer', sub: 'Frankfurt', x: 440, y: 190 },
+      { id: 's1', label: 'App servers', sub: 'Mumbai', x: 610, y: 60 },
+      { id: 's2', label: 'App servers', sub: 'Frankfurt', x: 610, y: 190 },
+    ],
+    edges: [
+      { from: 'u', to: 'dns' },
+      { from: 'dns', to: 'lb1' },
+      { from: 'dns', to: 'lb2' },
+      { from: 'lb1', to: 's1' },
+      { from: 'lb2', to: 's2' },
+    ],
+  }}
+/>
+
+DNS has hard limits as a traffic tool. It can't see server load. It can't move traffic faster than cached answers expire. Some clients ignore TTLs. So the usual split is: **DNS chooses the region or entry point, and a load balancer inside the region chooses the server**, reacting to health checks within seconds.
+
+## When DNS fails, everything fails
+
+- **Dyn, October 2016.** A huge DDoS attack from the Mirai botnet hit Dyn, a major DNS provider. Twitter, GitHub, Netflix, Reddit and others became unreachable for many users, even though their own servers were fine. Lesson: your DNS provider is a critical dependency. Big companies now use more than one.
+- **Facebook, October 2021.** A faulty configuration change took down Facebook's backbone network. Their DNS servers were built to withdraw themselves from the internet when they couldn't reach Facebook's data centers, and they did exactly that. `facebook.com`, Instagram and WhatsApp stopped resolving worldwide for about six hours, and the internal tools needed to fix it depended on the same network. Lesson: the systems you need for recovery must not share a failure with the thing that broke.
+
+## Numbers to remember
+
+- A lookup that walks the whole tree: tens to a couple of hundred milliseconds.
+- Answered by the resolver's cache: one round trip to the resolver, a few to a few tens of milliseconds.
+- Answered by your device's cache: effectively zero.
+- Delegations for top-level domains are cached for up to 2 days, so resolvers rarely need the root at all.
+
+## How to say it in an interview
+
+> Clients resolve `api.example.com` through DNS. We use latency-based DNS routing to send each user to the nearest healthy region, with a TTL of around 60 seconds so a regional failover takes effect within a minute or two. Inside each region, a load balancer spreads requests across servers, because DNS can't see server health or load at that level.
+
+## Sources and further reading
+
+- Cloudflare Learning Center, [What is DNS?](https://www.cloudflare.com/learning/dns/what-is-dns/)
+- IANA, [Root servers](https://www.iana.org/domains/root/servers)
+- RFC 1034 and RFC 1035, the original DNS concepts and specification
+- AWS, [Route 53 routing policies](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy.html)
+- Meta Engineering, [More details about the October 4 outage](https://engineering.fb.com/2021/10/05/networking-traffic/outage-details/)

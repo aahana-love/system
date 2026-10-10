@@ -1,0 +1,252 @@
+@import "tailwindcss";
+
+/* ── Tokens ──────────────────────────────────────────────
+   Signage palette: cool fog paper, navy ink, and one color per
+   phase "line" (the roadmap is drawn as transit lines). */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --surface-2: #e9edf2;
+  --ink: #14213d;
+  --ink-2: #4a5468;
+  --ink-3: #6f798c;
+  --rule: #d3d9e2;
+  --good: #16794f;
+  --good-bg: #e2f3ea;
+  --bad: #b9382a;
+  --bad-bg: #fbe8e5;
+  --focus: #2f5bea;
+  --hit: #0d8f7e;
+  --miss: #c47a00;
+  --line-0: #e0532a;
+  --line-1: #2f6bde;
+  --line-2: #0d8f7e;
+  --line-3: #8b4fc7;
+  --line-4: #c99400;
+  --line-5: #d6407a;
+  --line-6: #6a8a2a;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d131e;
+    --surface: #141c2a;
+    --surface-2: #1c2638;
+    --ink: #e7ebf3;
+    --ink-2: #a3adc1;
+    --ink-3: #7d889d;
+    --rule: #2a3549;
+    --good: #45c891;
+    --good-bg: #12352a;
+    --bad: #f27461;
+    --bad-bg: #3b1d1a;
+    --focus: #7c9cff;
+    --hit: #36c2ae;
+    --miss: #f0a93a;
+    --line-0: #f26a43;
+    --line-1: #5b8cf0;
+    --line-2: #2fb9a5;
+    --line-3: #a77ae0;
+    --line-4: #e3b52d;
+    --line-5: #ec6a9b;
+    --line-6: #93b54c;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d131e;
+  --surface: #141c2a;
+  --surface-2: #1c2638;
+  --ink: #e7ebf3;
+  --ink-2: #a3adc1;
+  --ink-3: #7d889d;
+  --rule: #2a3549;
+  --good: #45c891;
+  --good-bg: #12352a;
+  --bad: #f27461;
+  --bad-bg: #3b1d1a;
+  --focus: #7c9cff;
+  --hit: #36c2ae;
+  --miss: #f0a93a;
+  --line-0: #f26a43;
+  --line-1: #5b8cf0;
+  --line-2: #2fb9a5;
+  --line-3: #a77ae0;
+  --line-4: #e3b52d;
+  --line-5: #ec6a9b;
+  --line-6: #93b54c;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --color-focus: var(--focus);
+  --color-hit: var(--hit);
+  --color-miss: var(--miss);
+  --font-display: "Overpass Variable", "Overpass", system-ui, sans-serif;
+  --font-serif: "Source Serif 4 Variable", "Source Serif 4", Georgia, serif;
+  --font-mono: "Overpass Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+/* ── Base ──────────────────────────────────────────────── */
+html {
+  background: var(--bg);
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+::selection {
+  background: color-mix(in oklab, var(--focus) 25%, transparent);
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Station ring pulse: the one ambient animation ("you are here"). */
+@keyframes here {
+  0% { transform: scale(1); opacity: 0.55; }
+  70% { transform: scale(2.1); opacity: 0; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+.here-pulse {
+  animation: here 2.4s ease-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+/* Packets in simulators travel along an SVG path via CSS motion path. */
+@keyframes travel {
+  from { offset-distance: 0%; opacity: 1; }
+  92% { opacity: 1; }
+  to { offset-distance: 100%; opacity: 0; }
+}
+.packet {
+  offset-rotate: 0deg;
+  animation: travel var(--dur, 700ms) linear forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .here-pulse { display: none; }
+}
+
+@layer components {
+  /* ── Lesson prose ──────────────────────────────────────── */
+  .lesson {
+    font-family: var(--font-serif);
+    font-size: 1.125rem;
+    line-height: 1.7;
+    color: var(--ink);
+  }
+  .lesson > * + * { margin-top: 1.1em; }
+  .lesson h2:not(.wide *) {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 1.6rem;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    margin-top: 2.4em;
+    scroll-margin-top: 5rem;
+  }
+  .lesson h3:not(.wide *) {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.2rem;
+    margin-top: 1.8em;
+  }
+  .lesson h2:not(.wide *) + *, .lesson h3:not(.wide *) + * { margin-top: 0.6em; }
+  .lesson strong { font-weight: 650; }
+  .lesson ul:not(.wide *), .lesson ol:not(.wide *) { padding-left: 1.4em; }
+  .lesson ul:not(.wide *) { list-style: disc; }
+  .lesson ol:not(.wide *) { list-style: decimal; }
+  .lesson li:not(.wide *) + li { margin-top: 0.35em; }
+  .lesson li:not(.wide *)::marker { color: var(--ink-3); }
+  .lesson a:not(.term) {
+    color: var(--focus);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .lesson code:not(.wide *) {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--surface-2);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  .lesson pre:not(.wide *) {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+  }
+  .lesson pre:not(.wide *) code { background: none; padding: 0; font-size: inherit; }
+  .lesson table:not(.wide *) {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-display);
+    font-size: 0.95rem;
+    line-height: 1.45;
+    display: block;
+    overflow-x: auto;
+  }
+  .lesson th:not(.wide *) {
+    text-align: left;
+    font-weight: 700;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-2);
+    border-bottom: 2px solid var(--ink);
+    padding: 0.5rem 0.75rem 0.4rem 0;
+  }
+  .lesson td:not(.wide *) {
+    border-bottom: 1px solid var(--rule);
+    padding: 0.6rem 0.75rem 0.6rem 0;
+    vertical-align: top;
+  }
+  .lesson blockquote {
+    border-left: 3px solid var(--rule);
+    padding-left: 1rem;
+    color: var(--ink-2);
+    font-style: italic;
+  }
+  .lesson .wide {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+}
